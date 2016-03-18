@@ -45,6 +45,8 @@ class LocalIntegrationTests extends WordSpec with Matchers with FutureValues wit
         override def teamId(team: String): Future[Option[Int]] = Future.successful(Some(1))
 
         override def addRepoToTeam(repoName: String, teamId: Int): Future[Unit] = Future.successful(Unit)
+
+        override def createServiceHook(repoName: String, serviceType:ServiceHookType): Future[String] = Future.successful("hookUrl")
       }
 
       val bintray = new BintrayService {

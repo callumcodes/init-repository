@@ -27,8 +27,11 @@ import play.api.libs.json.Json
 
 class GithubSpecs extends WordSpec with Matchers with FutureValues with WireMockEndpoints {
 
+
+  val gituser = "gituser"
+  val gittoken = "gittoken"
   class FakeGithubHttp extends GithubHttp {
-    override def creds: ServiceCredentials = ServiceCredentials("", "")
+    override def creds: ServiceCredentials = ServiceCredentials(gituser, gittoken)
   }
 
   val github: Github = new Github{
@@ -144,7 +147,7 @@ class GithubSpecs extends WordSpec with Matchers with FutureValues with WireMock
       assertRequest(
         method = POST,
         url = "/orgs/hmrc/repos",
-        body = Some("""{
+        jsonBody = Some("""{
                       |    "name": "domain",
                       |    "description": "",
                       |    "homepage": "",
@@ -157,6 +160,52 @@ class GithubSpecs extends WordSpec with Matchers with FutureValues with WireMock
       )
     }
   }
+
+  "Github.createServiceHook" should {
+
+    "successfully reate service hook" in {
+
+      val createServiceHookResponse =
+        """
+          |{
+          |   "id": 1,
+          |   "url": "https://api.github.com/repos/hmrc/domain/hooks/1",
+          |   "test_url": "https://api.github.com/repos/hmrc/domain/hooks/1/test",
+          |   "ping_url": "https://api.github.com/repos/hmrc/domain/hooks/1/pings"
+          |}
+        """.stripMargin
+
+
+      givenGitHubExpects(
+        method = POST,
+        url = "/repos/hmrc/domain/hooks",
+        willRespondWith = (201, Some(createServiceHookResponse))
+      )
+
+      val hookUrl = github.createServiceHook("domain", Travis).await
+
+      hookUrl shouldBe "https://api.github.com/repos/hmrc/domain/hooks/1"
+
+      assertRequest(
+        method = POST,
+        url = "/repos/hmrc/domain/hooks",
+        jsonBody = Some(s"""
+                      |{"name": "travis",
+                      |"active": true,
+                      |"events": ["push","pull_request"],
+                      |"config":{
+                      |     "domain": "notify.travis-ci.org",
+                      |     "content_type": "json",
+                      |     "user": "$gituser",
+                      |     "token": "$gittoken"
+                      |     }
+                      |}""".stripMargin)
+      )
+    }
+  }
+
+
+
 
   "Github.addRepoToTeam" should {
     "add a repository to a team in" in {
@@ -173,7 +222,7 @@ class GithubSpecs extends WordSpec with Matchers with FutureValues with WireMock
         method = PUT,
         url = "/teams/99/repos/hmrc/domain?permission=push",
         extraHeaders = Map("Accept" -> "application/vnd.github.ironman-preview+json"),
-        body = Some("""{"permission": "push"}""")
+        jsonBody = Some("""{"permission": "push"}""")
       )
     }
   }
@@ -196,13 +245,13 @@ class GithubSpecs extends WordSpec with Matchers with FutureValues with WireMock
                      method:RequestMethod,
                      url:String,
                      extraHeaders:Map[String,String] = Map(),
-                     body:Option[String]): Unit ={
+                     jsonBody:Option[String]): Unit ={
     val builder = new RequestPatternBuilder(method, urlEqualTo(url))
     extraHeaders.foreach { case(k, v) =>
       builder.withHeader(k, equalTo(v))
     }
 
-    body.map{ b =>
+    jsonBody.map{ b =>
       builder.withRequestBody(equalToJson(b))
     }.getOrElse(builder)
     endpointMock.verifyThat(builder)

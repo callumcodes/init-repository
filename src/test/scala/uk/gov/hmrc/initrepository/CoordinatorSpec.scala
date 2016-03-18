@@ -26,7 +26,7 @@ import scala.concurrent.Future
 import scala.util.Success
 
 
-class CoordinatorTests extends WordSpec with Matchers with FutureValues with BeforeAndAfterEach with MockitoSugar {
+class CoordinatorSpec extends WordSpec with Matchers with FutureValues with BeforeAndAfterEach with MockitoSugar {
 
   val FutureFalse = Future.successful(false)
   val FutureUnit = Future.successful(Unit)
@@ -47,6 +47,7 @@ class CoordinatorTests extends WordSpec with Matchers with FutureValues with Bef
       when(github.createRepo("newrepo")) thenReturn Future.successful("repo-url")
       when(bintray.createPackagesFor("newrepo")) thenReturn Future.successful()
       when(github.addRepoToTeam("newrepo", 1)) thenReturn Future.successful()
+      when(github.createServiceHook("newrepo", Travis)) thenReturn Future.successful("hook")
 
       // setup git calls
       when(git.initialiseRepository("repo-url", RepositoryType.Sbt)) thenReturn Success()
@@ -56,6 +57,7 @@ class CoordinatorTests extends WordSpec with Matchers with FutureValues with Bef
       // verify pre-conditions
       verify(github).containsRepo("newrepo")
       verify(github, atLeastOnce()).teamId("teamname")
+      verify(github, atLeastOnce()).createServiceHook("newrepo", Travis)
       verify(bintray).reposContainingPackage("newrepo")
 
       // verify repo creation calls

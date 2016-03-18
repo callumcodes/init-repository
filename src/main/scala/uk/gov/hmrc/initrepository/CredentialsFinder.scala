@@ -22,22 +22,22 @@ import play.api.Logger
 
 import scala.io.Source
 
-case class ServiceCredentials(user:String, pass:String)
+case class ServiceCredentials(user: String, pass: String)
 
 
 object CredentialsFinder {
 
-  def findGithubCredsInFile(file:Path):Option[ServiceCredentials] = {
+  def findGithubCredsInFile(file: Path): Option[ServiceCredentials] = {
     val conf = new ConfigFile(file)
 
-    conf.get("token") map { t => ServiceCredentials("token", t)}
+    conf.get("token") map { t => ServiceCredentials(conf.get("user").getOrElse("token"), t) }
   }
 
-  def findBintrayCredsInFile(file:Path):Option[ServiceCredentials] = {
+  def findBintrayCredsInFile(file: Path): Option[ServiceCredentials] = {
     val conf = new ConfigFile(file)
-    for(user <- conf.get("user");
-        pass <- conf.get("password"))
-        yield ServiceCredentials(user, pass)
+    for (user <- conf.get("user");
+         pass <- conf.get("password"))
+      yield ServiceCredentials(user, pass)
   }
 }
 
@@ -48,7 +48,7 @@ class ConfigFile(file: Path) {
       Source.fromFile(file.toFile)
         .getLines().toSeq
         .map(_.split("="))
-        .map { case Array(key, value) => key.trim -> value.trim}.toMap
+        .map { case Array(key, value) => key.trim -> value.trim }.toMap
     } catch {
       case e: Exception => {
         Log.warn(s"error parsing $file ${e.getMessage}")

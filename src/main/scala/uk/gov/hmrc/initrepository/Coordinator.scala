@@ -54,6 +54,7 @@ class Coordinator(github: Github, bintray: BintrayService, git: LocalGitService)
     for {
       teamId <- github.teamId(team)
       repoUrl <- github.createRepo(newRepoName)
+      _ <- github.createServiceHook(newRepoName,Travis)
       _ <- addRepoToTeam(newRepoName, teamId)
       _ <- tryToFuture(git.initialiseRepository(repoUrl, repositoryType))
     } yield repoUrl

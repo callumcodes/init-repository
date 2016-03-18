@@ -16,37 +16,31 @@
 
 package uk.gov.hmrc.initrepository
 
-import java.net.URL
-import java.nio.file.{Paths, Files}
-
-import uk.gov.hmrc.initrepository.git.Command
-import play.api.libs.json._
-import play.api.libs.ws._
-import play.api.libs.ws.ning.{NingAsyncHttpClientConfigBuilder, NingWSClient, NingWSClientConfig}
-
 import scala.concurrent.ExecutionContext.Implicits.global
+
+import play.api.libs.json._
+import play.api.libs.ws.{WSRequest, WSResponse}
+
 import scala.concurrent.Future
 
-class GithubUrls( orgName:String = "hmrc",
-                  apiRoot:String = "https://api.github.com"){
 
-  def createRepo: URL =
-    new URL(s"$apiRoot/orgs/$orgName/repos")
-
-  def containsRepo(repo:String) =
-    new URL(s"$apiRoot/repos/$orgName/$repo")
-
-  def teams =
-    new URL(s"$apiRoot/orgs/$orgName/teams?per_page=100")
-
-  def addTeamToRepo(repoName:String, teamId:Int) =
-    new URL(s"$apiRoot/teams/$teamId/repos/$orgName/$repoName?permission=push")
-}
 
 class RequestException(request:WSRequest, response:WSResponse)
   extends Exception(s"Got status ${response.status}: ${request.method} ${request.url} ${response.body}"){
 
 }
+
+sealed trait ServiceHookType {
+  def name:String
+  def domain :String
+}
+
+case object Travis extends ServiceHookType{
+  override val name: String = "travis"
+
+  override val domain: String = "notify.travis-ci.org"
+}
+
 
 trait Github{
 
@@ -115,56 +109,27 @@ trait Github{
       githubHttp.postJsonString(githubUrls.createRepo, payload).map { _ => s"git@github.com:hmrc/$repoName.git" }
   }
 
+
+  def createServiceHook(repoName: String, serviceType : ServiceHookType): Future[String] = {
+    Log.info(s"creating github service hook for repo '$repoName' service name: ${serviceType.name} domain: ${serviceType.domain}")
+
+    val payload = s"""|{"name": "${serviceType.name}",
+                      |"active": true,
+                      |"events": ["push","pull_request"],
+                      |"config":{
+                      |     "domain": "${serviceType.domain}",
+                      |     "content_type": "json",
+                      |     "user": "${githubHttp.creds.user}",
+                      |     "token": "${githubHttp.creds.pass}"
+                      |     }
+                      |}""".stripMargin
+
+    githubHttp.postJsonString(githubUrls.webhook(repoName), payload).map { response =>
+      (Json.parse(response) \ "url").as[String]
+    }
+  }
+  
   def close() = githubHttp.close()
 }
 
-case class SimpleResponse(status:Int, rawBody:String)
 
-
-trait GithubHttp{
-
-  def creds:ServiceCredentials
-
-  private val ws = new NingWSClient(new NingAsyncHttpClientConfigBuilder(new NingWSClientConfig()).build())
-
-  def close() = {
-    ws.close()
-    Log.debug("closing github http client")
-  }
-
-  def buildJsonCall(method:String, url:URL, body:Option[JsValue] = None):WSRequest={
-
-    val req = ws.url(url.toString)
-      .withMethod(method)
-      .withAuth(creds.user, creds.pass, WSAuthScheme.BASIC)
-      .withHeaders(
-        "content-type" -> "application/json")
-
-    Log.debug("req = " + req)
-
-    body.map { b =>
-      req.withBody(b)
-    }.getOrElse(req)
-  }
-
-  def getBody(url:URL): Future[String] = {
-    get(url).map(_.body)
-  }
-
-  def get(url:URL): Future[WSResponse] = {
-    val resultF = buildJsonCall("GET", url).execute()
-    resultF.flatMap { res => res.status match {
-      case s if s >= 200 && s < 300 => Future.successful(res)
-      case _@e => Future.failed(new scala.Exception(s"Didn't get expected status code when reading from Github. Got status ${res.status}: GET ${url} ${res.body}"))
-    }}
-  }
-
-  def postJsonString(url:URL, body:String): Future[String] = {
-    buildJsonCall("POST", url, Some(Json.parse(body))).execute().flatMap { case result =>
-      result.status match {
-        case s if s >= 200 && s < 300 => Future.successful(result.body)
-        case _@e => Future.failed(new scala.Exception(s"Didn't get expected status code when writing to Github. Got status ${result.status}: POST ${url} ${result.body}"))
-      }
-    }
-  }
-}
