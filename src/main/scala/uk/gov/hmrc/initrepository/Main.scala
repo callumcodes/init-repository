@@ -124,7 +124,7 @@ object Main {
 
     try {
       val result = new Coordinator(github, bintray, git, travis)
-        .run(newRepoName, team, repositoryType, bootstrapVersion, enableTravis)
+        .run(newRepoName, Seq(team), repositoryType, bootstrapVersion, enableTravis)
 
       Await.result(result, Duration(120, TimeUnit.SECONDS))
     } finally {

@@ -16,6 +16,9 @@
 
 package uk.gov.hmrc.initrepository
 
+import cats.Apply
+import cats.data.Validated
+import cats.data.Validated.{Invalid, Valid}
 import uk.gov.hmrc.initrepository.FutureUtils.exponentialRetry
 import uk.gov.hmrc.initrepository.RepositoryType.RepositoryType
 import uk.gov.hmrc.initrepository.bintray.BintrayService
@@ -29,13 +32,13 @@ class Coordinator(github: Github, bintray: BintrayService, git: LocalGitService,
 
   type PreConditionError[T] = Option[T]
 
-  def run(newRepoName: String, team: String, repositoryType: RepositoryType, bootstrapVersion: String, enableTravis: Boolean): Future[Unit] = {
-    checkPreConditions(newRepoName, team).flatMap { error =>
+  def run(newRepoName: String, teamNames: Seq[String], repositoryType: RepositoryType, bootstrapVersion: String, enableTravis: Boolean): Future[Unit] = {
+    checkPreConditions(newRepoName, teamNames).flatMap { error =>
       if (error.isEmpty) {
         Log.info(s"Pre-conditions met, creating '$newRepoName'")
 
         for {
-          repoUrl <- initGitRepo(newRepoName, team, repositoryType, bootstrapVersion)
+          repoUrl <- initGitRepo(newRepoName, teamNames, repositoryType, bootstrapVersion)
           _ <- bintray.createPackagesFor(newRepoName)
           _ <- initTravis(newRepoName, enableTravis)
         } yield repoUrl
@@ -49,7 +52,8 @@ class Coordinator(github: Github, bintray: BintrayService, git: LocalGitService,
     }
   }
 
-  private def initGitRepo(newRepoName: String, team: String, repositoryType: RepositoryType, bootstrapVersion: String): Future[String] =
+  private def initGitRepo(newRepoName: String, teams: Seq[String], repositoryType: RepositoryType, bootstrapVersion: String): Future[String] = {
+    val team = teams.head
     for {
       teamId <- github.teamId(team)
       repoUrl <- github.createRepo(newRepoName)
@@ -58,10 +62,11 @@ class Coordinator(github: Github, bintray: BintrayService, git: LocalGitService,
       }
       _ <- tryToFuture(git.initialiseRepository(repoUrl, repositoryType, bootstrapVersion))
     } yield repoUrl
+  }
 
   private def addRepoToTeam(repoName: String, teamIdO: Option[Int]): Future[Unit] = {
     teamIdO.map { teamId =>
-      github.addRepoToTeam(repoName, teamIdO.get)
+      github.addRepoToTeam(repoName, teamId)
     }.getOrElse(Future.failed(new Exception("Didn't have a valid team id")))
   }
 
@@ -89,15 +94,31 @@ class Coordinator(github: Github, bintray: BintrayService, git: LocalGitService,
     }
   }
 
-  private def checkPreConditions(newRepoName: String, team: String): Future[PreConditionError[String]] = {
-    for (repoExists <- github.containsRepo(newRepoName);
-         existingPackages <- bintray.reposContainingPackage(newRepoName);
-         teamExists <- github.teamId(team).map(_.isDefined))
-      yield {
-        if (repoExists) Some(s"Repository with name '$newRepoName' already exists in github ")
-        else if (existingPackages.nonEmpty) Some(s"The following bintray packages already exist: '${existingPackages.mkString(",")}'")
-        else if (!teamExists) Some(s"Team with name '$team' could not be found in github")
-        else None
-      }
+  case class Team(teamName: String, existsInGithub: Boolean)
+
+  def getTeamsFromGithub(teamNames: Seq[String]): Future[Seq[Team]] = {
+    Future.sequence(teamNames.map(team => github.teamId(team).map(id => Team(team, id.isDefined))))
+  }
+
+
+  private def checkPreConditions(newRepoName: String, teamNames: Seq[String]): Future[Seq[String]] = {
+
+      val repoExistsErrorFO: Future[Option[String]] = github.containsRepo(newRepoName).map(exists => if(exists) Some("Error1") else None)
+      val packageExistsErrorFO: Future[Option[String]] = bintray.reposContainingPackage(newRepoName).map(existingPack => if(existingPack.nonEmpty) Some("Error 2") else None )
+
+      val teamMissingErrorFO: Future[Option[String]] =
+        getTeamsFromGithub(teamNames)
+          .map { teams =>
+            teams.filterNot(_.existsInGithub)
+              .map(t => s"Error $t")
+              .reduceOption(_ + ", " + _)
+          }
+
+      Future.sequence(Seq(repoExistsErrorFO, packageExistsErrorFO, teamMissingErrorFO)).map(_.flatten)
+    }
+
+
+  def missingTeamErrorMessage(teamName: String) = {
+    s"Team with name '$teamName' could not be found in github"
   }
 }
