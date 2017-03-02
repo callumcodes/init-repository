@@ -50,14 +50,15 @@ class CoordinatorTests extends WordSpec with Matchers with FutureValues with Bef
 
       // setup pre-conditions
       when(github.teamId(teamName1)) thenReturn Future.successful(Some(teamId1))
-      when(github.teamId(teamName2)) thenReturn Future.successful(Some(teamId1))
+      when(github.teamId(teamName2)) thenReturn Future.successful(Some(teamId2))
       when(github.containsRepo(repoName)) thenReturn FutureFalse
       when(bintray.reposContainingPackage(repoName)) thenReturn Future.successful(Set[String]())
 
       // setup repo creation calls
       when(github.createRepo(repoName)) thenReturn Future.successful(repoUrl)
       when(bintray.createPackagesFor(repoName)) thenReturn Future.successful()
-      when(github.addRepoToTeam(repoName, 1)) thenReturn Future.successful()
+      when(github.addRepoToTeam(repoName, teamId1)) thenReturn Future.successful()
+      when(github.addRepoToTeam(repoName, teamId2)) thenReturn Future.successful()
 
       // setup git calls
       when(git.initialiseRepository(repoUrl, RepositoryType.Sbt, bootstrapTag)) thenReturn Success()

@@ -16,9 +16,6 @@
 
 package uk.gov.hmrc.initrepository
 
-import cats.Apply
-import cats.data.Validated
-import cats.data.Validated.{Invalid, Valid}
 import uk.gov.hmrc.initrepository.FutureUtils.exponentialRetry
 import uk.gov.hmrc.initrepository.RepositoryType.RepositoryType
 import uk.gov.hmrc.initrepository.bintray.BintrayService
@@ -38,11 +35,11 @@ class Coordinator(github: Github, bintray: BintrayService, git: LocalGitService,
         Log.info(s"Pre-conditions met, creating '$newRepoName'")
 
         for {
-          repoUrl <- initGitRepo(newRepoName, teamNames, repositoryType, bootstrapVersion)
+          repoUrl <- initGitRepo(newRepoName, repositoryType, bootstrapVersion)
           _ <- bintray.createPackagesFor(newRepoName)
           _ <- initTravis(newRepoName, enableTravis)
+          _ <- addTeamsToGitRepo(teamNames, newRepoName)
         } yield repoUrl
-
       } else {
         Future.failed(new Exception(s"pre-condition check failed with: ${error.get}"))
       }
@@ -52,14 +49,24 @@ class Coordinator(github: Github, bintray: BintrayService, git: LocalGitService,
     }
   }
 
-  private def initGitRepo(newRepoName: String, teams: Seq[String], repositoryType: RepositoryType, bootstrapVersion: String): Future[String] = {
-    val team = teams.head
-    for {
-      teamId <- github.teamId(team)
-      repoUrl <- github.createRepo(newRepoName)
-      _ <- exponentialRetry(10) {
-        addRepoToTeam(newRepoName, teamId)
+  private def addTeamsToGitRepo(teamNames: Seq[String], newRepoName: String): Future[Seq[Unit]] = {
+
+    val x: Seq[Future[Unit]] = teamNames.map { teamName =>
+      val teamIdFuture: Future[Option[Int]] =  github.teamId(teamName)
+
+      teamIdFuture.flatMap { teamId =>
+        exponentialRetry(10) {
+          addRepoToTeam(newRepoName, teamId)
+        }
       }
+    }
+    Future.sequence(x)
+  }
+
+
+  private def initGitRepo(newRepoName: String, repositoryType: RepositoryType, bootstrapVersion: String): Future[String] = {
+    for {
+      repoUrl <- github.createRepo(newRepoName)
       _ <- tryToFuture(git.initialiseRepository(repoUrl, repositoryType, bootstrapVersion))
     } yield repoUrl
   }
@@ -101,7 +108,7 @@ class Coordinator(github: Github, bintray: BintrayService, git: LocalGitService,
   }
 
 
-  private def checkPreConditions(newRepoName: String, teamNames: Seq[String]): Future[Seq[String]] = {
+  private def checkPreConditions(newRepoName: String, teamNames: Seq[String]): Future[Option[String]] = {
 
       val repoExistsErrorFO: Future[Option[String]] = github.containsRepo(newRepoName).map(exists => if(exists) Some("Error1") else None)
       val packageExistsErrorFO: Future[Option[String]] = bintray.reposContainingPackage(newRepoName).map(existingPack => if(existingPack.nonEmpty) Some("Error 2") else None )
@@ -114,7 +121,10 @@ class Coordinator(github: Github, bintray: BintrayService, git: LocalGitService,
               .reduceOption(_ + ", " + _)
           }
 
-      Future.sequence(Seq(repoExistsErrorFO, packageExistsErrorFO, teamMissingErrorFO)).map(_.flatten)
+      Future
+        .sequence(Seq(repoExistsErrorFO, packageExistsErrorFO, teamMissingErrorFO))
+        .map(_.flatten)
+        .map(errors => if (errors.isEmpty) None else Some(errors.mkString(", ")))
     }
 
 
